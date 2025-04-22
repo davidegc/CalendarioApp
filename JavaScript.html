@@ -1,0 +1,259 @@
+<script>
+  // --- Global Variables ---
+  let currentUser = null;
+  let pendingTable, approvedTable, rejectedTable;
+  let calendarInstance = null;
+  let eventModal;
+  let eventTypes = [];
+  let availableCalendars = [];
+  let tooltipTriggerList = [];
+
+  // --- Utility Functions ---
+
+  /** Muestra una alerta de carga con SweetAlert. */
+  function showLoadingAlert(message = 'Procesando...') { Swal.fire({ title: message, text: 'Por favor espera...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } }); }
+  /** Oculta la alerta de carga activa de SweetAlert. */
+  function hideLoadingAlert() { Swal.close(); }
+  /** Muestra una alerta de éxito con SweetAlert. */
+  function showSuccessAlert(message) { Swal.fire({ icon: 'success', title: 'Éxito', text: message, timer: 2000, timerProgressBar: true }); }
+  /** Muestra una alerta de error con SweetAlert y registra en consola. */
+  function showErrorAlert(message, errorDetails = '') { console.error("showErrorAlert:", message, errorDetails); Swal.fire({ icon: 'error', title: 'Error', text: message }); }
+  /** Formatea una fecha ISO (YYYY-MM-DD) a formato corto local (ej. DD/MM/YYYY). */
+  function formatDisplayDate(isoDateString) { if (!isoDateString) return ''; try { return luxon.DateTime.fromISO(isoDateString).setLocale('es').toLocaleString(luxon.DateTime.DATE_SHORT); } catch (e) { console.error("Error formateando fecha:", isoDateString, e); return "Fecha inválida"; } }
+  /** Actualiza la vista previa del título concatenado en el formulario modal. */
+  function updateTitlePreview() {
+      const type = $('#eventType').val() || "[Tipo]"; const title = $('#eventTitle').val() || "[Título específico]";
+      const previewText = (type !== "[Tipo]" && title !== "[Título específico]") ? `${type} | ${title}` : "[Selecciona tipo y escribe título]";
+      $('#titlePreview').text(`Vista previa título: ${previewText}`);
+  }
+  /** Genera el HTML para los botones de acción de una fila de DataTable. */
+  function generateActionButtons(data) {
+    if (!currentUser) return '<span class="text-muted small">...</span>';
+    const uniqueId = data.id; const status = data.status;
+    const isOwner = currentUser.email === data.requesterEmail; const isValidator = currentUser.role === 'validator';
+    let buttons = '<div class="btn-group btn-group-sm" role="group">';
+    if (isValidator) {
+      if (status === 'Pendiente') {
+        buttons += `<button type="button" class="btn btn-success approve-btn" title="Aprobar" data-id="${uniqueId}"><i class="fas fa-check"></i></button>`;
+        buttons += `<button type="button" class="btn btn-warning reject-btn" title="Rechazar" data-id="${uniqueId}"><i class="fas fa-times"></i></button>`;
+      }
+       buttons += `<button type="button" class="btn btn-info edit-btn" title="Modificar" data-id="${uniqueId}"><i class="fas fa-edit"></i></button>`;
+       buttons += `<button type="button" class="btn btn-danger delete-btn" title="Eliminar" data-id="${uniqueId}"><i class="fas fa-trash-alt"></i></button>`;
+    } else if (isOwner) {
+       if (status === 'Pendiente' || status === 'Rechazado') {
+           buttons += `<button type="button" class="btn btn-info edit-btn" title="Modificar" data-id="${uniqueId}"><i class="fas fa-edit"></i></button>`;
+           buttons += `<button type="button" class="btn btn-danger delete-btn" title="Eliminar" data-id="${uniqueId}"><i class="fas fa-trash-alt"></i></button>`;
+       } else { buttons += `<button type="button" class="btn btn-secondary view-btn" title="Ver Detalles" data-id="${uniqueId}"><i class="fas fa-eye"></i></button>`; }
+    } else { buttons += `<button type="button" class="btn btn-secondary view-btn" title="Ver Detalles" data-id="${uniqueId}"><i class="fas fa-eye"></i></button>`; }
+    if (data.fileId) { buttons += ` <button type="button" class="btn btn-outline-secondary attachment-btn" title="Ver Adjunto" data-file-id="${data.fileId}"><i class="fas fa-paperclip"></i></button>`; }
+    buttons += '</div>'; return buttons;
+  }
+  /** Inicializa o re-inicializa los tooltips de Bootstrap en la página. */
+  function initializeTooltips() {
+       try { tooltipTriggerList.forEach(tooltip => tooltip?.dispose()); } catch (e) { /* Ignore */ }
+       tooltipTriggerList = []; const newTooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+       tooltipTriggerList = newTooltipTriggerList.map(el => document.body.contains(el) ? new bootstrap.Tooltip(el) : null).filter(t => t !== null);
+   }
+
+  // --- Data Fetching and Initialization ---
+
+  /** Carga la información del usuario actual y actualiza la interfaz. */
+  function loadUserInfo() {
+    return new Promise((resolve, reject) => {
+        google.script.run.withSuccessHandler(user => {
+                if (!user || !user.email || !user.role) { console.error("Respuesta inválida de getUserInfo:", user); $('#user-greeting').text('Usuario no identificado'); $('#user-role-badge').hide(); currentUser = null; resolve(null); return; }
+                currentUser = user; $('#user-greeting').text(user.email);
+                $('#user-role-badge').text(user.role === 'validator' ? 'Validador' : 'Solicitante').removeClass('bg-info bg-secondary').addClass(user.role === 'validator' ? 'bg-info' : 'bg-secondary').show();
+                resolve(user);
+            }).withFailureHandler(error => { console.error("loadUserInfo Failure:", error); $('#user-greeting').text('Error al cargar usuario'); showErrorAlert("Error crítico al iniciar. No se pudo identificar al usuario.", error ? (error.message || error) : "Error desconocido"); currentUser = null; reject(error || new Error("Fallo getUserInfo")); }).getUserInfo(); }); }
+  /** Carga los calendarios disponibles desde el backend y los popula en el select del formulario. */
+  function loadAvailableCalendars() {
+    const select = $('#calendarSelect'); select.prop('disabled', true).html('<option value="" disabled selected>Cargando...</option>');
+    return new Promise((resolve, reject) => { google.script.run.withSuccessHandler(calendars => {
+            availableCalendars = calendars || []; select.html('<option value="" disabled selected>Selecciona...</option>');
+            if (availableCalendars.length > 0) { availableCalendars.forEach(cal => select.append(new Option(cal.name, cal.id))); select.prop('disabled', false); }
+            else { select.html('<option value="" disabled>No hay</option>'); } resolve(availableCalendars);
+          }).withFailureHandler(error => { console.error("Error cargando calendarios disponibles:", error); select.html('<option value="" disabled selected>Error al cargar</option>'); showErrorAlert("No se pudieron cargar los calendarios.", error.message || error); reject(error); }).getAvailableCalendars(); }); }
+  /** Carga los tipos de evento desde el backend y los popula en el select del formulario. */
+  function loadEventTypes() {
+      const select = $('#eventType'); select.prop('disabled', true).html('<option value="" disabled selected>Cargando...</option>');
+      return new Promise((resolve, reject) => { google.script.run.withSuccessHandler(types => {
+              eventTypes = types || []; select.html('<option value="" disabled selected>Selecciona...</option>');
+              if (eventTypes.length > 0) { eventTypes.forEach(type => select.append(new Option(type, type))); select.prop('disabled', false); }
+              else { select.html('<option value="" disabled>No hay</option>'); } resolve(eventTypes);
+          }).withFailureHandler(error => { console.error("Error cargando tipos de evento:", error); select.html('<option value="" disabled selected>Error al cargar</option>'); showErrorAlert("No se pudieron cargar los tipos de evento.", error.message || error); reject(error); }).getEventTypes(); }); }
+   /** Carga y muestra la lista de próximos eventos aprobados en la pestaña correspondiente. */
+   function loadUpcomingEvents() {
+       const listContainer = $('#upcoming-events-list'); const noEventsMsg = $('#no-upcoming-msg');
+       listContainer.html('<div class="text-center"><div class="spinner-border spinner-border-sm"></div></div>'); noEventsMsg.hide();
+       google.script.run.withSuccessHandler(upcomingEvents => { listContainer.empty();
+               if (Array.isArray(upcomingEvents)) { $('#upcoming-count').text(upcomingEvents.length);
+                   if (upcomingEvents.length > 0) {
+                       upcomingEvents.forEach(event => {
+                           const start = formatDisplayDate(event.startDate); const end = formatDisplayDate(event.endDate); const dates = start === end ? start : `${start} - ${end}`;
+                           const listItem = `<a href="#" class="list-group-item list-group-item-action view-btn" data-id="${event.id}"><div class="d-flex w-100 justify-content-between"><h6 class="mb-1">${event.title || '(Sin Título)'}</h6><small class="text-muted">${dates}</small></div><small class="text-muted">${event.eventType || 'Otro'}</small></a>`;
+                           listContainer.append(listItem);
+                       }); noEventsMsg.hide();
+                   } else { noEventsMsg.show(); } addEventListenersToUpcomingList();
+               } else { console.error("Respuesta inválida de getUpcomingApprovedEvents:", upcomingEvents); listContainer.html('<p class="text-danger">Error: Respuesta inválida.</p>'); noEventsMsg.hide(); $('#upcoming-count').text('0'); }
+           }).withFailureHandler(error => { console.error("Error cargando próximos eventos:", error); listContainer.html('<p class="text-danger">Error al cargar.</p>'); noEventsMsg.hide(); $('#upcoming-count').text('0'); showErrorAlert("No se pudieron cargar los próximos eventos.", error.message || error); }).getUpcomingApprovedEvents(); }
+    /** Añade listeners a los elementos de la lista de próximos eventos para ver detalles. */
+    function addEventListenersToUpcomingList() {
+        const listContainer = $('#upcoming-events-list'); listContainer.off('click', '.view-btn');
+        listContainer.on('click', '.view-btn', function(e) { e.preventDefault(); if (currentUser) { viewEventDetails($(this).data('id')); } else { showErrorAlert("Usuario no listo."); } }); }
+  /** Inicializa una instancia de DataTable para mostrar eventos filtrados por estado. */
+  function initializeDataTable(tableId, statusFilter) {
+      if ($.fn.DataTable.isDataTable(`#${tableId}`)) { $(`#${tableId}`).DataTable().destroy(); $(`#${tableId} tbody`).empty(); }
+      return $(`#${tableId}`).DataTable({ processing: true, serverSide: false,
+          ajax: function(data, callback, settings) { google.script.run.withSuccessHandler(response => {
+                      if (!response || !response.data) { callback({ data: [] }); return; }
+                      const allVisibleEvents = response.data; if (statusFilter === 'Pendiente') { updateTabCounts(allVisibleEvents); }
+                      const filteredData = allVisibleEvents.filter(event => event.status === statusFilter); callback({ data: filteredData });
+                      if (statusFilter === 'Aprobado') { updateFullCalendar(filteredData); }
+                  }).withFailureHandler(error => { console.error(`Error cargando eventos ${statusFilter}:`, error); showErrorAlert(`Error cargando eventos ${statusFilter}.`, error.message || error); callback({ data: [] }); }).getAllVisibleEventsForUser(); },
+          columns: [ { data: 'eventType', title: 'Tipo' }, { data: 'title', title: 'Título' }, { data: 'requesterEmail', title: 'Solicitante' },
+              { data: 'startDate', title: 'Fechas', render: function(data, type, row) { const start = formatDisplayDate(row.startDate); const end = formatDisplayDate(row.endDate); return start === end ? start : `${start} - ${end}`; } },
+              { data: 'status', title: 'Estado', render: function(data, type, row) { let badgeClass = 'bg-secondary'; if (data === 'Aprobado') badgeClass = 'bg-success'; else if (data === 'Pendiente') badgeClass = 'bg-warning text-dark'; else if (data === 'Rechazado') badgeClass = 'bg-danger'; return `<span class="badge ${badgeClass}">${data}</span>`; } },
+              { data: null, title: 'Acciones', orderable: false, searchable: false, render: function(data, type, row) { return generateActionButtons(row); } } ],
+          language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/es-ES.json' }, order: [[3, 'asc']], responsive: true,
+          drawCallback: function( settings ) { addEventListenersToTableButtons(`#${tableId}`); initializeTooltips(); },
+          error: function (jqXHR, textStatus, errorThrown) { console.error(`Error DT ${tableId}: ${textStatus}`, errorThrown); showErrorAlert(`Error al mostrar tabla ${statusFilter}.`); } }); }
+   /** Actualiza los contadores numéricos en las pestañas de estado. */
+   function updateTabCounts(allVisibleEvents) {
+        if (!allVisibleEvents) return; const pendingCount = allVisibleEvents.filter(e => e.status === 'Pendiente').length;
+        const approvedCount = allVisibleEvents.filter(e => e.status === 'Aprobado').length; const rejectedCount = allVisibleEvents.filter(e => e.status === 'Rechazado').length;
+        $('#pending-count').text(pendingCount); $('#approved-count').text(approvedCount); $('#rejected-count').text(rejectedCount); }
+  /** Inicializa o actualiza la instancia de FullCalendar con los eventos aprobados. */
+  function updateFullCalendar(approvedEvents) {
+       if (!Array.isArray(approvedEvents)) { approvedEvents = []; } const calendarEvents = approvedEvents.map(event => ({ id: event.id, title: event.title, start: event.startDate, end: luxon.DateTime.fromISO(event.endDate).plus({ days: 1 }).toISODate(), extendedProps: { description: event.description, requester: event.requesterEmail, fileId: event.fileId, calendarEventId: event.calendarEventId, eventType: event.eventType }, }));
+       const calendarEl = document.getElementById('calendar'); if (!calendarEl) return;
+       if (calendarInstance) { calendarInstance.removeAllEvents(); calendarInstance.addEventSource(calendarEvents); }
+       else { calendarInstance = new FullCalendar.Calendar(calendarEl, { initialView: 'dayGridMonth', locale: 'es', headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, events: calendarEvents, editable: false, selectable: false, eventClick: function(info) { viewEventDetails(info.event.id); }, eventTimeFormat: { hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }, dayHeaderFormat: { weekday: 'short', month: 'numeric', day: 'numeric', omitCommas: true }, });
+           const calendarTabPane = document.getElementById('calendar-view-pane'); if (calendarTabPane?.classList.contains('active')) { calendarInstance.render(); } } }
+  /** Recarga los datos de todas las DataTables, la lista de próximos eventos y el calendario. */
+  function reloadAllData() {
+      showLoadingAlert('Actualizando...'); loadUpcomingEvents();
+      if (pendingTable) pendingTable.ajax.reload(null, false); if (approvedTable) approvedTable.ajax.reload(null, false); if (rejectedTable) rejectedTable.ajax.reload(null, false);
+      setTimeout(hideLoadingAlert, 1000); }
+
+  // --- Event Form Handling (Add/Edit) ---
+
+  /** Abre el modal de evento en modo 'Agregar', limpiando el formulario. */
+  function openAddEventModal() {
+      try { if (!eventModal) { const el = document.getElementById('eventModal'); if(el) eventModal = new bootstrap.Modal(el); else throw new Error("Modal element not found"); } $('#eventForm')[0].reset(); $('#eventForm').removeClass('was-validated is-invalid'); $('#eventForm :input').removeClass('is-invalid');
+          $('#formMode').val('add'); $('#eventModalLabel').text('Registrar Nuevo Evento'); $('#submitEventButton').text('Registrar Evento').prop('disabled', false);
+          $('#currentAttachmentInfo').hide(); $('#removeAttachment').prop('checked', false); populateDropdownsFromCache(); updateTitlePreview(); initializeTooltips(); eventModal.show();
+      } catch (error) { console.error("Error en openAddEventModal:", error); showErrorAlert("Ocurrió un error al abrir el formulario.", error.message); } }
+  /** Abre el modal de evento en modo 'Editar', cargando los datos del evento. */
+  function openEditEventModal(uniqueId) {
+      showLoadingAlert('Cargando datos...'); google.script.run.withSuccessHandler(eventData => { hideLoadingAlert(); if (!eventData) { showErrorAlert("No se encontraron datos para editar."); return; }
+              $('#eventForm')[0].reset(); $('#eventForm').removeClass('was-validated is-invalid'); $('#eventForm :input').removeClass('is-invalid');
+              $('#formMode').val('edit'); $('#eventModalLabel').text('Modificar Evento'); $('#submitEventButton').text('Guardar Cambios').prop('disabled', false);;
+              $('#eventId').val(eventData.id); $('#eventTitle').val(eventData.title); $('#startDate').val(eventData.startDate); $('#endDate').val(eventData.endDate); $('#eventDescription').val(eventData.description);
+              populateDropdownsFromCache(); $('#eventType').val(eventData.eventType); $('#calendarSelect').val(eventData.calendarId); updateTitlePreview();
+              if ($('#eventType').val() !== eventData.eventType) console.warn(`Tipo "${eventData.eventType}" no encontrado.`); if ($('#calendarSelect').val() !== eventData.calendarId) console.warn(`Calendario "${eventData.calendarId}" no encontrado.`);
+              if (eventData.fileId) { $('#currentAttachmentInfo').show(); $('#currentAttachmentLink').text(`Archivo actual`).attr('title', `ID: ${eventData.fileId}`).off('click').on('click', function(e) { e.preventDefault(); viewAttachment(eventData.fileId); }); $('#removeAttachment').prop('checked', false); }
+              else { $('#currentAttachmentInfo').hide(); } initializeTooltips(); eventModal.show();
+          }).withFailureHandler(error => { hideLoadingAlert(); showErrorAlert("Error al cargar detalles para editar.", error.message || error); }).getEventDetailsForEdit(uniqueId); }
+  /** Maneja el envío del formulario modal (Agregar o Editar evento). */
+  function handleFormSubmit() {
+      if (!currentUser) { showErrorAlert("Error: Usuario no identificado."); return; } const form = $('#eventForm')[0]; const formMode = $('#formMode').val(); $('#eventForm :input').removeClass('is-invalid'); let isValid = true;
+      $('#eventForm :input[required]').each(function() { if (!$(this).val()) { $(this).addClass('is-invalid'); isValid = false; } });
+      const startDate = $('#startDate').val(); const endDate = $('#endDate').val(); const startDateObj = startDate ? new Date(startDate + 'T00:00:00') : null; const endDateObj = endDate ? new Date(endDate + 'T00:00:00') : null;
+      if (!startDate) { $('#startDate').addClass('is-invalid'); isValid = false; } if (!endDate) { $('#endDate').addClass('is-invalid'); isValid = false; }
+      if (startDate && endDate && endDateObj < startDateObj) { $('#endDate').addClass('is-invalid').siblings('.invalid-feedback').text('Fin < Inicio.'); isValid = false; } else if (endDate) { $('#endDate').siblings('.invalid-feedback').text('Fecha fin requerida.'); }
+      if (!isValid) { Swal.fire('Campos incompletos', 'Revisa campos.', 'warning'); return; }
+      $('#submitEventButton').prop('disabled', true); showLoadingAlert('Guardando...'); const formData = { id: $('#eventId').val(), eventType: $('#eventType').val(), title: $('#eventTitle').val(), startDate: startDate, endDate: endDate, description: $('#eventDescription').val(), calendarId: $('#calendarSelect').val(), removeAttachment: $('#removeAttachment').is(':checked') ? 'true' : 'false' };
+      const fileInput = $('#eventAttachment')[0]; const file = fileInput.files[0]; let fileData = null;
+      const executeSubmit = (fData, fileInfo) => { const backendFunction = formMode === 'add' ? 'addEvent' : 'updateEvent'; google.script.run.withSuccessHandler(response => { hideLoadingAlert(); $('#submitEventButton').prop('disabled', false); if (response.success) { showSuccessAlert(response.message); eventModal.hide(); reloadAllData(); } else { showErrorAlert(response.message || "Error desconocido al guardar."); } }).withFailureHandler(error => { hideLoadingAlert(); $('#submitEventButton').prop('disabled', false); showErrorAlert(`Error de comunicación: ${error.message || error}`); console.error(`FailureHandler for ${backendFunction}:`, error); })[backendFunction](fData, fileInfo); };
+      if (file) { if (file.size > 50*1024*1024) { hideLoadingAlert(); showErrorAlert("Archivo >50MB."); $('#submitEventButton').prop('disabled', false); return; } const reader = new FileReader(); reader.onload = (e) => { fileData = { blob: e.target.result.split(',')[1], mimeType: file.type, fileName: file.name }; executeSubmit(formData, fileData); }; reader.onerror = (e) => { hideLoadingAlert(); showErrorAlert("Error al leer archivo."); $('#submitEventButton').prop('disabled', false); console.error("FileReader onerror:", e); }; reader.readAsDataURL(file); }
+      else { executeSubmit(formData, null); } }
+
+  // --- Action Button Handlers ---
+
+  /** Añade listeners delegados a los botones de acción dentro de una tabla DataTable. */
+  function addEventListenersToTableButtons(tableSelector) {
+      const tableBody = $(`${tableSelector} tbody`); tableBody.off('click'); // Clear all previous delegated listeners on body
+      tableBody.on('click', '.approve-btn', function() { handleApprove($(this).data('id')); }); tableBody.on('click', '.reject-btn', function() { handleReject($(this).data('id')); });
+      tableBody.on('click', '.edit-btn', function() { openEditEventModal($(this).data('id')); }); tableBody.on('click', '.delete-btn', function() { handleDelete($(this).data('id')); });
+      tableBody.on('click', '.view-btn', function() { viewEventDetails($(this).data('id')); }); tableBody.on('click', '.attachment-btn', function() { viewAttachment($(this).data('file-id')); }); }
+  /** Maneja la acción de 'Aprobar' un evento. Pide notas opcionales. */
+  function handleApprove(uniqueId) {
+      Swal.fire({ title: 'Aprobar Evento', input: 'textarea', inputLabel: 'Notas (opcional)', inputPlaceholder: 'Escribe tus notas aquí...', showCancelButton: true, confirmButtonText: 'Aprobar', cancelButtonText: 'Cancelar', showLoaderOnConfirm: true, preConfirm: (notes) => { showLoadingAlert('Aprobando...'); return new Promise((resolve) => { google.script.run.withSuccessHandler(r => resolve(r)).withFailureHandler(e => resolve({success: false, message: e.message || e})).respondToEventRequest('approve', uniqueId, notes); }); }, allowOutsideClick: () => !Swal.isLoading() }).then((result) => { if (result.isConfirmed) { if (result.value.success) { showSuccessAlert(result.value.message); reloadAllData(); } else { showErrorAlert(result.value.message); } } }); }
+   /** Maneja la acción de 'Rechazar' un evento. Requiere notas. */
+   function handleReject(uniqueId) {
+      Swal.fire({ title: 'Rechazar Evento', input: 'textarea', inputLabel: 'Notas (Requerido)', inputPlaceholder: 'Motivo del rechazo...', inputAttributes: { required: true }, validationMessage: 'Por favor, ingresa el motivo del rechazo', showCancelButton: true, confirmButtonText: 'Rechazar', cancelButtonText: 'Cancelar', confirmButtonColor: '#dc3545', showLoaderOnConfirm: true, preConfirm: (notes) => { if (!notes) { Swal.showValidationMessage('El motivo es obligatorio'); return false; } showLoadingAlert('Rechazando...'); return new Promise((resolve) => { google.script.run.withSuccessHandler(r => resolve(r)).withFailureHandler(e => resolve({success: false, message: e.message || e})).respondToEventRequest('reject', uniqueId, notes); }); }, allowOutsideClick: () => !Swal.isLoading() }).then((result) => { if (result.isConfirmed) { if (result.value.success) { showSuccessAlert(result.value.message); reloadAllData(); } else { showErrorAlert(result.value.message); } } }); }
+  /** Maneja la acción de 'Eliminar' un evento. Pide confirmación. */
+  function handleDelete(uniqueId) {
+      Swal.fire({ title: '¿Estás seguro?', text: "¡No podrás revertir esto!", icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: 'Sí, eliminar!', cancelButtonText: 'Cancelar', showLoaderOnConfirm: true, preConfirm: () => { showLoadingAlert('Eliminando...'); return new Promise((resolve) => { google.script.run.withSuccessHandler(r => resolve(r)).withFailureHandler(e => resolve({success: false, message: e.message || e})).deleteEvent(uniqueId); }); }, allowOutsideClick: () => !Swal.isLoading() }).then((result) => { if (result.isConfirmed) { if (result.value.success) { showSuccessAlert(result.value.message); reloadAllData(); } else { showErrorAlert(result.value.message); } } }); }
+
+  /**
+   * Muestra los detalles completos de un evento en una alerta modal.
+   * @param {string} uniqueId ID del evento a visualizar.
+   */
+  function viewEventDetails(uniqueId) {
+       showLoadingAlert('Cargando detalles...');
+       // Usar la misma función que para editar, ya que ahora devuelve las notas
+       google.script.run
+           .withSuccessHandler(eventData => {
+               hideLoadingAlert();
+               if (!eventData) { showErrorAlert("No se encontraron detalles del evento."); return; }
+
+               const startDate = formatDisplayDate(eventData.startDate);
+               const endDate = formatDisplayDate(eventData.endDate);
+               // Usar fullTitle si existe (desde la corrección en getEventDetailsForEdit), sino el title normal
+               const displayTitle = eventData.fullTitle || eventData.title || '(Sin título)';
+               const requesterInfo = eventData.requesterEmail || 'N/A';
+               let fileInfo = eventData.fileId ? `<p><strong>Adjunto:</strong> <a href="#" onclick="viewAttachment('${eventData.fileId}'); return false;">Ver archivo</a></p>` : '<p><strong>Adjunto:</strong> Ninguno</p>';
+               // Mostrar las notas del validador
+               let validatorNotesHtml = `<p><strong>Notas Validador:</strong> ${eventData.validatorNotes || 'Ninguna'}</p>`;
+
+               Swal.fire({
+                   title: `Detalles: ${displayTitle}`,
+                   html: `
+                       <div style="text-align: left; font-size: 0.9rem;">
+                           <p><strong>Tipo:</strong> ${eventData.eventType || 'N/A'}</p>
+                           <p><strong>Solicitante:</strong> ${requesterInfo}</p>
+                           <p><strong>Fechas:</strong> ${startDate === endDate ? startDate : `${startDate} - ${endDate}`}</p>
+                           <p><strong>Estado:</strong> ${eventData.status || 'N/A'}</p>
+                           <p><strong>Descripción:</strong></p>
+                           <p style="white-space: pre-wrap; background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 5px; border-radius: 3px;">${eventData.description || 'N/A'}</p>
+                           ${validatorNotesHtml} ${fileInfo}
+                       </div>`,
+                   icon: 'info', confirmButtonText: 'Cerrar'
+                });
+           })
+           .withFailureHandler(error => {
+               hideLoadingAlert();
+               console.error("Error cargando detalles para visualización:", error);
+               showErrorAlert("Error al cargar los detalles del evento.", error.message || error);
+           })
+           .getEventDetailsForEdit(uniqueId); // Llamar a la función que ahora devuelve las notas
+  }
+
+  /** Intenta obtener la URL de un archivo adjunto y abrirlo en una nueva pestaña. */
+  function viewAttachment(fileId) {
+      if (!fileId) return; showLoadingAlert('Obteniendo enlace...');
+      google.script.run.withSuccessHandler(fileUrl => { hideLoadingAlert(); if (fileUrl) { window.open(fileUrl, '_blank'); } else { showErrorAlert("No se pudo obtener URL."); } }).withFailureHandler(error => { hideLoadingAlert(); showErrorAlert("Error obteniendo URL.", error.message || error); }).getFileUrl(fileId); }
+  /** Popula los dropdowns de tipo y calendario usando los datos cacheados globalmente. */
+  function populateDropdownsFromCache() {
+      const eventTypeSelect = $('#eventType'); eventTypeSelect.html('<option value="" disabled selected>Selecciona...</option>');
+      if (eventTypes?.length > 0) { eventTypes.forEach(type => eventTypeSelect.append(new Option(type, type))); } else { eventTypeSelect.html('<option value="" disabled>No hay</option>'); }
+      const calendarSelect = $('#calendarSelect'); calendarSelect.html('<option value="" disabled selected>Selecciona...</option>');
+       if (availableCalendars?.length > 0) { availableCalendars.forEach(cal => calendarSelect.append(new Option(cal.name, cal.id))); } else { calendarSelect.html('<option value="" disabled>No hay</option>'); } }
+
+  // --- Document Ready ---
+  /** Código que se ejecuta cuando el DOM está completamente cargado. */
+  $(document).ready(function() {
+      try { const el = document.getElementById('eventModal'); if (el) eventModal = new bootstrap.Modal(el); else console.error("#eventModal no encontrado!"); } catch (error) { console.error("Error init Modal:", error); }
+      $('#addEventBtn').on('click', openAddEventModal); $('#eventType, #eventTitle').on('change input', updateTitlePreview); $('#submitEventButton').on('click', handleFormSubmit);
+      $('#eventModal').on('hidden.bs.modal', function () { $('#eventForm')[0].reset(); $('#eventForm').removeClass('was-validated'); $('#eventForm :input').removeClass('is-invalid'); $('#currentAttachmentInfo').hide(); $('#removeAttachment').prop('checked', false); $('#eventAttachment').val(''); });
+      $('button[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) { const targetTableId = $(e.target).attr('aria-controls').replace('-pane', 'Table'); if ($.fn.DataTable.isDataTable(`#${targetTableId}`)) { $(`#${targetTableId}`).DataTable().columns.adjust().responsive.recalc(); } if ($(e.target).attr('aria-controls') === 'calendar-view-pane' && calendarInstance) { calendarInstance.render(); } });
+      $('#eventModal').on('shown.bs.modal', initializeTooltips); showLoadingAlert('Iniciando...');
+      loadUserInfo().then(userOrNull => { Promise.all([loadEventTypes(), loadAvailableCalendars()]).then(([loadedTypes, loadedCalendars]) => {
+                  loadUpcomingEvents(); pendingTable = initializeDataTable('pendingEventsTable', 'Pendiente'); approvedTable = initializeDataTable('approvedEventsTable', 'Aprobado');
+                  rejectedTable = initializeDataTable('rejectedEventsTable', 'Rechazado'); updateFullCalendar([]); initializeTooltips(); hideLoadingAlert();
+              }).catch(error => { hideLoadingAlert(); console.error("Error cargando datos iniciales (tipos/calendarios):", error); showErrorAlert("Error al cargar datos iniciales necesarios.", error.message || error); initializeTooltips(); });
+      }).catch(error => { hideLoadingAlert(); console.error("Fallo CRÍTICO al iniciar (loadUserInfo catch):", error); initializeTooltips(); }); });
+
+</script>
