@@ -3,19 +3,6 @@
  * Servidor principal para la aplicación Calendario App.
  */
 
-// --- Definición de Columnas (Índice basado en 0) ---
-const COL = Object.freeze({
-  ID: 0, TIMESTAMP: 1, REQ_EMAIL: 2, REQ_NAME: 3, EVENT_TYPE: 4, TITLE: 5,
-  START_DATE: 6, END_DATE: 7, DESCRIPTION: 8, FILE_ID: 9, CALENDAR_ID: 10,
-  STATUS: 11, VALIDATOR_NOTES: 12, CALENDAR_EVENT_ID: 13
-});
-const TOTAL_COLUMNS = Object.keys(COL).length;
-
-/**
- * Responde a las solicitudes GET sirviendo la interfaz de usuario principal.
- * @param {object} e El objeto de evento de la solicitud GET.
- * @returns {HtmlOutput} El servicio HTML para mostrar la página principal.
- */
 function doGet(e) {
   return HtmlService.createTemplateFromFile('Index')
       .evaluate()
@@ -24,20 +11,10 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
-/**
- * Incluye el contenido de archivos HTML (CSS, JavaScript) dentro del HTML principal.
- * @param {string} filename El nombre del archivo HTML a incluir (sin extensión).
- * @returns {string} El contenido del archivo HTML especificado.
- */
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
-/**
- * Obtiene el email y rol ('validator' o 'requester') del usuario que accede a la aplicación.
- * @returns {object|null} Objeto { email: string, role: string } o null si no se identifica.
- * @throws {Error} Si ocurre un error inesperado.
- */
 function getUserInfo() {
     try {
         const activeUser = Session.getActiveUser();
@@ -57,10 +34,6 @@ function getUserInfo() {
     }
 }
 
-/**
- * Devuelve la lista de calendarios configurados manualmente (AVAILABLE_CALENDARS) que son válidos.
- * @returns {Array<object>} Array de objetos { name: string, id: string } de calendarios válidos.
- */
 function getAvailableCalendars() {
   if (!AVAILABLE_CALENDARS || AVAILABLE_CALENDARS.length === 0) return [];
   return AVAILABLE_CALENDARS.filter(calInfo => {
@@ -70,18 +43,10 @@ function getAvailableCalendars() {
   });
 }
 
-/**
- * Devuelve la lista de tipos de evento predefinidos.
- * @returns {Array<string>} La lista de tipos de evento.
- */
 function getEventTypes() {
     return EVENT_TYPES;
 }
 
-/**
- * Obtiene TODOS los eventos de la hoja de cálculo a los que el usuario actual tiene acceso.
- * @returns {{data: Array<object>}} Objeto con la propiedad 'data' conteniendo un array de eventos.
- */
 function getAllVisibleEventsForUser() {
   try {
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
@@ -89,32 +54,40 @@ function getAllVisibleEventsForUser() {
     const range = sheet.getDataRange();
     const values = range.getValues();
     const events = [];
+    const headers = values[0].map(h => h.toString().trim());
+
     for (let i = 1; i < values.length; i++) {
         const row = values[i];
         if (!row || row.length < TOTAL_COLUMNS || !row[COL.ID]) continue;
+
         const startDate = parseAndFormatDateISO(row[COL.START_DATE]);
         const endDate = parseAndFormatDateISO(row[COL.END_DATE]);
-        if (!startDate || !endDate) continue;
+        if (!startDate || !endDate) {
+            continue;
+        }
+
         events.push({
-            id: row[COL.ID], eventType: row[COL.EVENT_TYPE], title: row[COL.TITLE],
-            startDate: startDate, endDate: endDate, description: row[COL.DESCRIPTION],
-            requesterName: row[COL.REQ_NAME], requesterEmail: row[COL.REQ_EMAIL],
-            status: row[COL.STATUS], validatorNotes: row[COL.VALIDATOR_NOTES],
-            fileId: row[COL.FILE_ID], calendarId: row[COL.CALENDAR_ID],
+            id: row[COL.ID],
+            eventType: row[COL.EVENT_TYPE],
+            title: row[COL.TITLE],
+            startDate: startDate,
+            endDate: endDate,
+            description: row[COL.DESCRIPTION],
+            requesterName: row[COL.REQ_NAME],
+            requesterEmail: row[COL.REQ_EMAIL],
+            status: row[COL.STATUS],
+            validatorNotes: row[COL.VALIDATOR_NOTES],
+            fileId: row[COL.FILE_ID],
+            calendarId: row[COL.CALENDAR_ID],
             calendarEventId: row[COL.CALENDAR_EVENT_ID]
         });
     }
     return { data: events };
   } catch (error) {
-    console.error(`Error en getAllVisibleEventsForUser: ${error.toString()}\nStack: ${error.stack}`);
     return { data: [] };
   }
 }
 
-/**
- * Obtiene los eventos aprobados que ocurren próximamente.
- * @returns {Array<object>} Array de objetos de evento próximos, ordenados por fecha.
- */
 function getUpcomingApprovedEvents() {
     try {
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
@@ -124,50 +97,55 @@ function getUpcomingApprovedEvents() {
         const upcoming = [];
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const limitDate = new Date(today); limitDate.setDate(today.getDate() + UPCOMING_EVENT_DAYS);
+
         for (let i = 1; i < values.length; i++) {
             const row = values[i];
              if (row.length < TOTAL_COLUMNS || !row[COL.ID] || row[COL.STATUS] !== 'Aprobado') continue;
+
             const startDate = parseDateObject(row[COL.START_DATE]);
             const endDate = parseDateObject(row[COL.END_DATE]);
-             if (!startDate || !endDate) continue;
-             startDate.setHours(0,0,0,0); endDate.setHours(0,0,0,0);
+             if (!startDate || !endDate) {
+                 continue;
+             }
+
+             startDate.setHours(0,0,0,0);
+             endDate.setHours(0,0,0,0);
+
             if (endDate >= today && startDate < limitDate) {
                  upcoming.push({
-                     id: row[COL.ID], eventType: row[COL.EVENT_TYPE], title: row[COL.TITLE],
-                     startDate: formatISODate(startDate), endDate: formatISODate(endDate),
+                     id: row[COL.ID],
+                     eventType: row[COL.EVENT_TYPE],
+                     title: row[COL.TITLE],
+                     startDate: formatISODate(startDate),
+                     endDate: formatISODate(endDate),
                  });
             }
         }
         upcoming.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
         return upcoming.slice(0, MAX_UPCOMING_EVENTS);
     } catch (error) {
-        console.error(`Error en getUpcomingApprovedEvents: ${error.toString()}\nStack: ${error.stack}`);
         return [];
     }
 }
 
-/**
- * Obtiene los detalles de un evento específico por su ID para edición o visualización.
- * Incluye las notas del validador.
- * @param {string} uniqueId El ID único del evento.
- * @returns {object|null} Objeto con datos del evento, o null si no se encuentra/error.
- */
-function getEventDetailsForEdit(uniqueId) { // Renamed for clarity, but used by view too
+function getEventDetailsForEdit(uniqueId) {
     if (!uniqueId) return null;
     try {
         const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
-        if (!sheet) return null;
+        if (!sheet) {
+             return null;
+        }
         const { rowIndex, eventData } = findEventRowDataById(sheet, uniqueId);
 
         if (eventData) {
              const titleParts = eventData.title.split('|');
              const specificTitle = titleParts.length > 1 ? titleParts[1].trim() : eventData.title;
-             // Devolver todos los campos necesarios, incluyendo las notas
+
              return {
                 id: eventData.id,
                 eventType: eventData.eventType,
-                title: specificTitle, // Título específico para el campo de edición
-                fullTitle: eventData.title, // Título completo para visualización
+                title: specificTitle,
+                fullTitle: eventData.title,
                 startDate: formatISODate(eventData.startDate),
                 endDate: formatISODate(eventData.endDate),
                 description: eventData.description,
@@ -175,29 +153,22 @@ function getEventDetailsForEdit(uniqueId) { // Renamed for clarity, but used by 
                 calendarId: eventData.calendarId,
                 status: eventData.status,
                 requesterEmail: eventData.requesterEmail,
-                validatorNotes: eventData.validatorNotes // <-- AÑADIDO PARA ENVIAR AL CLIENTE
+                validatorNotes: eventData.validatorNotes
             };
         } else {
             return null;
         }
     } catch (error) {
-        console.error(`Error en getEventDetailsForEdit (ID: ${uniqueId}): ${error.toString()}\nStack: ${error.stack}`);
         return null;
     }
 }
 
-/**
- * Agrega un nuevo evento a la hoja y guarda adjunto en Drive.
- * @param {object} formData Datos del formulario.
- * @param {object|null} fileData Información del archivo adjunto o null.
- * @returns {{success: boolean, message: string}} Resultado.
- * @throws {Error} Si falla una operación crítica.
- */
 function addEvent(formData, fileData) {
   try {
     const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
     if (!sheet) throw new Error(`Hoja de cálculo "${SHEET_NAME}" no encontrada.`);
     ensureSheetHeaders(sheet);
+
     const userInfo = getUserInfo();
     if (!userInfo || !userInfo.email) throw new Error("No se pudo identificar al usuario solicitante.");
 
@@ -212,11 +183,13 @@ function addEvent(formData, fileData) {
           const decodedBlob = Utilities.base64Decode(fileData.blob);
           const blob = Utilities.newBlob(decodedBlob, fileData.mimeType, fileData.fileName);
           const file = folder.createFile(blob);
-          fileId = file.getId(); // Obtener ID del archivo creado
+          fileId = file.getId();
           fileUrl = file.getUrl();
-          try { file.addViewer(VALIDATOR_EMAIL); } catch (e) { console.warn(`No se pudo compartir archivo ${fileId} con validador: ${e}`);}
+
+          try { file.addViewer(VALIDATOR_EMAIL); }
+          catch (e) { }
+
       } catch (driveError) {
-          console.error(`Error CRÍTICO al guardar archivo en Drive: ${driveError}\nStack: ${driveError.stack}`);
           throw new Error(`Error al guardar el archivo adjunto: ${driveError.message}. No se registró el evento.`);
       }
     }
@@ -224,17 +197,25 @@ function addEvent(formData, fileData) {
     const finalTitle = `${formData.eventType} | ${formData.title}`;
     const startDateObj = parseDateObject(formData.startDate);
     const endDateObj = parseDateObject(formData.endDate);
-    if (!startDateObj || !endDateObj || endDateObj < startDateObj) throw new Error("Fechas inválidas proporcionadas.");
+
+    if (!startDateObj || !endDateObj) throw new Error("Fechas de inicio o fin inválidas proporcionadas.");
+    if (endDateObj < startDateObj) throw new Error("La fecha de fin no puede ser anterior a la fecha de inicio.");
 
     const newRow = Array(TOTAL_COLUMNS).fill('');
-    newRow[COL.ID] = uniqueId; newRow[COL.TIMESTAMP] = timestamp;
-    newRow[COL.REQ_EMAIL] = userInfo.email; newRow[COL.REQ_NAME] = userInfo.email;
-    newRow[COL.EVENT_TYPE] = formData.eventType; newRow[COL.TITLE] = finalTitle;
-    newRow[COL.START_DATE] = startDateObj; newRow[COL.END_DATE] = endDateObj;
+    newRow[COL.ID] = uniqueId;
+    newRow[COL.TIMESTAMP] = timestamp;
+    newRow[COL.REQ_EMAIL] = userInfo.email;
+    newRow[COL.REQ_NAME] = userInfo.email;
+    newRow[COL.EVENT_TYPE] = formData.eventType;
+    newRow[COL.TITLE] = finalTitle;
+    newRow[COL.START_DATE] = startDateObj;
+    newRow[COL.END_DATE] = endDateObj;
     newRow[COL.DESCRIPTION] = formData.description;
-    newRow[COL.FILE_ID] = fileId; // <-- Asignar el fileId obtenido
-    newRow[COL.CALENDAR_ID] = formData.calendarId; newRow[COL.STATUS] = "Pendiente";
-    newRow[COL.VALIDATOR_NOTES] = ""; newRow[COL.CALENDAR_EVENT_ID] = ""; // Inicializar vacíos
+    newRow[COL.FILE_ID] = fileId;
+    newRow[COL.CALENDAR_ID] = formData.calendarId;
+    newRow[COL.STATUS] = "Pendiente";
+    newRow[COL.VALIDATOR_NOTES] = "";
+    newRow[COL.CALENDAR_EVENT_ID] = "";
 
     sheet.appendRow(newRow);
     SpreadsheetApp.flush();
@@ -247,381 +228,441 @@ function addEvent(formData, fileData) {
         bodyValidator += `Descripción: ${formData.description}\n`;
         if (fileUrl) { bodyValidator += `Archivo Adjunto: ${fileUrl}\n`; }
         bodyValidator += `\nAccede a la aplicación para revisarlo:\n${ScriptApp.getService().getUrl()}`;
+
         MailApp.sendEmail(VALIDATOR_EMAIL, subjectValidator, bodyValidator);
     } catch (mailError) {
-        console.warn(`Falló el envío de correo de notificación al validador: ${mailError}`);
     }
+
     return { success: true, message: "Evento registrado correctamente. Pendiente de aprobación." };
+
   } catch (error) {
-    console.error(`Error CRÍTICO en addEvent: ${error.toString()}\nStack: ${error.stack}`);
     return { success: false, message: `Error al registrar el evento: ${error.message}` };
   }
 }
 
-/**
- * Procesa la acción de aprobar o rechazar un evento.
- * @param {string} action 'approve' o 'reject'.
- * @param {string} uniqueId ID del evento.
- * @param {string} [notes=""] Notas opcionales del validador.
- * @returns {{success: boolean, message: string}} Resultado.
- * @throws {Error} Si falla una operación crítica o validación.
- */
 function respondToEventRequest(action, uniqueId, notes = "") {
-    let targetCalendarId = null; let calendar = null;
+    let targetCalendarId = null;
+    let calendar = null;
     try {
         const currentUser = getUserInfo();
-        if (!currentUser || currentUser.role !== 'validator') throw new Error("Acción no permitida.");
+        if (!currentUser || currentUser.role !== 'validator') {
+            throw new Error("Acción no permitida. Solo los validadores pueden aprobar/rechazar.");
+        }
+
         const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
         if (!sheet) throw new Error(`Hoja "${SHEET_NAME}" no encontrada.`);
+
         const { rowIndex, eventData } = findEventRowDataById(sheet, uniqueId);
-        if (!eventData) throw new Error(`Evento ${uniqueId} no encontrado.`);
-        if (eventData.status !== 'Pendiente') return { success: false, message: `Evento ya procesado (${eventData.status}).` };
+        if (!eventData) throw new Error(`Evento con ID ${uniqueId} no encontrado.`);
+
+        if (eventData.status !== 'Pendiente') {
+            return { success: false, message: `El evento ya ha sido procesado (Estado actual: ${eventData.status}).` };
+        }
 
         targetCalendarId = eventData.calendarId;
-        let newStatus = "", notificationSubject = "", notificationBody = "", successMessage = "", calendarEventId = "";
+        let newStatus = "";
+        let notificationSubject = "";
+        let notificationBody = "";
+        let successMessage = "";
+        let calendarEventId = "";
 
         if (action === 'approve') {
             newStatus = 'Aprobado';
-            if (!targetCalendarId) throw new Error("No se especificó calendario destino.");
+            if (!targetCalendarId) throw new Error("No se especificó un calendario de destino para este evento.");
+
             try {
                 calendar = CalendarApp.getCalendarById(targetCalendarId);
-                if (!calendar) throw new Error(`Calendario (ID: ${targetCalendarId}) no encontrado.`);
-                const adjustedEndDate = new Date(eventData.endDate); adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+                if (!calendar) throw new Error(`Calendario de Google (ID: ${targetCalendarId}) no encontrado o inaccesible.`);
+
+                const adjustedEndDate = new Date(eventData.endDate);
+                adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+
                 const gCalEvent = calendar.createAllDayEvent(eventData.title, eventData.startDate, adjustedEndDate, { description: eventData.description });
                 calendarEventId = gCalEvent.getId();
+
             } catch (calendarError) {
-                console.error(`Error GCal (ID: ${targetCalendarId}): ${calendarError}\nStack: ${calendarError.stack}`);
-                if (calendarError.message.includes("permission")) throw new Error(`Permiso denegado para calendario "${calendar ? calendar.getName() : targetCalendarId}".`);
-                else if (calendarError.message.includes("not found")) throw new Error(`Calendario (ID: ${targetCalendarId}) no encontrado.`);
-                else throw new Error(`Error GCal: ${calendarError.message}`);
+                if (calendarError.message.includes("permission")) throw new Error(`Permiso denegado para acceder o modificar el calendario "${calendar ? calendar.getName() : targetCalendarId}". Verifica los permisos.`);
+                else if (calendarError.message.includes("not found")) throw new Error(`Calendario de Google (ID: ${targetCalendarId}) no encontrado.`);
+                else throw new Error(`Error al interactuar con Google Calendar: ${calendarError.message}`);
             }
+
             sheet.getRange(rowIndex, COL.STATUS + 1).setValue(newStatus);
             sheet.getRange(rowIndex, COL.VALIDATOR_NOTES + 1).setValue(notes);
             sheet.getRange(rowIndex, COL.CALENDAR_EVENT_ID + 1).setValue(calendarEventId);
+
             notificationSubject = `Evento Aprobado: ${eventData.title}`;
-            notificationBody = `Hola ${eventData.requesterName},\n\nTu evento "${eventData.title}" (${formatDisplayDate(eventData.startDate)} - ${formatDisplayDate(eventData.endDate)}) ha sido APROBADO.\n\nNotas: ${notes || 'Ninguna'}\n\nAgregado al calendario.`;
-            successMessage = `Evento "${eventData.title}" APROBADO.`;
+            notificationBody = `Hola ${eventData.requesterName || eventData.requesterEmail},\n\nTu solicitud de evento "${eventData.title}" (${formatDisplayDate(eventData.startDate)} - ${formatDisplayDate(eventData.endDate)}) ha sido APROBADA.\n\nNotas del validador: ${notes || 'Ninguna'}\n\nEl evento ha sido agregado al calendario correspondiente.`;
+            successMessage = `Evento "${eventData.title}" APROBADO y agregado a Google Calendar.`;
+
         } else if (action === 'reject') {
-            if (!notes || notes.trim() === "") throw new Error("Se requiere motivo para rechazar.");
+            if (!notes || notes.trim() === "") throw new Error("Se requiere un motivo (notas) para rechazar el evento.");
+
             newStatus = 'Rechazado';
             sheet.getRange(rowIndex, COL.STATUS + 1).setValue(newStatus);
-            sheet.getRange(rowIndex, COL.VALIDATOR_NOTES + 1).setValue(notes); // Guardar notas de rechazo
+            sheet.getRange(rowIndex, COL.VALIDATOR_NOTES + 1).setValue(notes);
             sheet.getRange(rowIndex, COL.CALENDAR_EVENT_ID + 1).setValue('');
-            notificationSubject = `Evento Rechazado: ${eventData.title}`;
-            notificationBody = `Hola ${eventData.requesterName},\n\nTu evento "${eventData.title}" (${formatDisplayDate(eventData.startDate)} - ${formatDisplayDate(eventData.endDate)}) ha sido RECHAZADO.\n\nMotivo: ${notes}`;
-            successMessage = `Evento "${eventData.title}" RECHAZADO.`;
-        } else { throw new Error(`Acción no válida: "${action}".`); }
 
-        try { MailApp.sendEmail(eventData.requesterEmail, notificationSubject, notificationBody); }
-        catch (mailError) { console.warn(`Falló envío de notificación: ${mailError}`); }
+            notificationSubject = `Evento Rechazado: ${eventData.title}`;
+            notificationBody = `Hola ${eventData.requesterName || eventData.requesterEmail},\n\nTu solicitud de evento "${eventData.title}" (${formatDisplayDate(eventData.startDate)} - ${formatDisplayDate(eventData.endDate)}) ha sido RECHAZADA.\n\nMotivo: ${notes}`;
+            successMessage = `Evento "${eventData.title}" RECHAZADO.`;
+
+        } else {
+            throw new Error(`Acción no válida proporcionada: "${action}". Debe ser 'approve' o 'reject'.`);
+        }
+
+        try {
+            if (eventData.requesterEmail) {
+                MailApp.sendEmail(eventData.requesterEmail, notificationSubject, notificationBody);
+            } else {
+            }
+        }
+        catch (mailError) {
+        }
+
         SpreadsheetApp.flush();
         return { success: true, message: successMessage };
+
     } catch (error) {
-        console.error(`Error CRÍTICO en respondToEventRequest: ${error.toString()}\nStack: ${error.stack}`);
-        return { success: false, message: `Error al procesar: ${error.message}` };
+        return { success: false, message: `Error al procesar la solicitud: ${error.message}` };
     }
 }
 
-/**
- * Actualiza un evento existente en hoja y calendario.
- * @param {object} formData Datos del formulario.
- * @param {object|null} fileData Nuevo archivo adjunto o null.
- * @returns {{success: boolean, message: string}} Resultado.
- * @throws {Error} Si falla una operación crítica o validación.
- */
 function updateEvent(formData, fileData) {
     const uniqueId = formData.id;
-    if (!uniqueId) return { success: false, message: "Error: Falta ID del evento." };
+    if (!uniqueId) return { success: false, message: "Error: Falta el ID del evento para actualizar." };
+
     try {
         const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
         if (!sheet) throw new Error(`Hoja "${SHEET_NAME}" no encontrada.`);
+
         const { rowIndex, eventData: originalEventData } = findEventRowDataById(sheet, uniqueId);
-        if (!originalEventData) throw new Error(`Evento ${uniqueId} no encontrado.`);
+        if (!originalEventData) throw new Error(`Evento con ID ${uniqueId} no encontrado para actualizar.`);
 
         const currentUser = getUserInfo();
-        if (!currentUser) throw new Error("No se pudo identificar al usuario.");
+        if (!currentUser) throw new Error("No se pudo identificar al usuario actual.");
+
         const isOwner = currentUser.email === originalEventData.requesterEmail;
         const isValidator = currentUser.role === 'validator';
         const currentStatus = originalEventData.status;
+
         if (!isValidator && !(isOwner && (currentStatus === 'Pendiente' || currentStatus === 'Rechazado'))) {
-            throw new Error("No tienes permiso para modificar este evento.");
+            throw new Error("No tienes permiso para modificar este evento en su estado actual.");
         }
 
         let newFileId = originalEventData.fileId;
         const oldFileId = originalEventData.fileId;
+
         if (formData.removeAttachment === 'true' && oldFileId) {
-             try { DriveApp.getFileById(oldFileId).setTrashed(true); } catch(e){ console.warn(`Error eliminando archivo ${oldFileId}: ${e}`); }
-             newFileId = ""; // Limpiar ID si se eliminó
-        } else if (fileData && fileData.blob) { // Si se sube un nuevo archivo
-             if (oldFileId) { // Eliminar el anterior si existía
-                 try { DriveApp.getFileById(oldFileId).setTrashed(true); } catch(e){ console.warn(`Error eliminando ${oldFileId} antes de reemplazar: ${e}`); }
+             try { DriveApp.getFileById(oldFileId).setTrashed(true); }
+             catch(e){ }
+             newFileId = "";
+        }
+        else if (fileData && fileData.blob) {
+             if (oldFileId) {
+                 try { DriveApp.getFileById(oldFileId).setTrashed(true); }
+                 catch(e){ }
              }
-             try { // Guardar el nuevo
+             try {
                  const folder = getDriveFolderById(DRIVE_FOLDER_ID);
                  const blob = Utilities.newBlob(Utilities.base64Decode(fileData.blob), fileData.mimeType, fileData.fileName);
                  const file = folder.createFile(blob);
-                 newFileId = file.getId(); // Obtener el ID del nuevo archivo
-                 try { file.addViewer(VALIDATOR_EMAIL); } catch (e) { console.warn(`No se pudo compartir ${newFileId}: ${e}`); }
+                 newFileId = file.getId();
+                 try { file.addViewer(VALIDATOR_EMAIL); } catch (e) { }
              } catch (driveError) {
-                 console.error(`Error CRÍTICO guardando nuevo archivo: ${driveError}\nStack: ${driveError.stack}`);
-                 throw new Error(`Error al guardar nuevo adjunto: ${driveError.message}.`);
+                 throw new Error(`Error al guardar el nuevo archivo adjunto: ${driveError.message}. No se guardaron los cambios del evento.`);
              }
         }
-        // Si no se marcó eliminar y no se subió nuevo, newFileId sigue siendo el original.
 
         const finalTitle = `${formData.eventType} | ${formData.title}`;
         const startDateObj = parseDateObject(formData.startDate);
         const endDateObj = parseDateObject(formData.endDate);
-        if (!startDateObj || !endDateObj || endDateObj < startDateObj) throw new Error("Fechas inválidas.");
+
+        if (!startDateObj || !endDateObj) throw new Error("Fechas de inicio o fin inválidas proporcionadas.");
+        if (endDateObj < startDateObj) throw new Error("La fecha de fin no puede ser anterior a la fecha de inicio.");
 
         const updatedRowData = sheet.getRange(rowIndex, 1, 1, TOTAL_COLUMNS).getValues()[0];
-        updatedRowData[COL.EVENT_TYPE] = formData.eventType; updatedRowData[COL.TITLE] = finalTitle;
-        updatedRowData[COL.START_DATE] = startDateObj; updatedRowData[COL.END_DATE] = endDateObj;
-        updatedRowData[COL.DESCRIPTION] = formData.description; updatedRowData[COL.CALENDAR_ID] = formData.calendarId;
-        updatedRowData[COL.FILE_ID] = newFileId; // <-- Asignar el ID correcto (nuevo, viejo o vacío)
-        let message = `Evento "${finalTitle}" actualizado.`;
+
+        updatedRowData[COL.EVENT_TYPE] = formData.eventType;
+        updatedRowData[COL.TITLE] = finalTitle;
+        updatedRowData[COL.START_DATE] = startDateObj;
+        updatedRowData[COL.END_DATE] = endDateObj;
+        updatedRowData[COL.DESCRIPTION] = formData.description;
+        updatedRowData[COL.CALENDAR_ID] = formData.calendarId;
+        updatedRowData[COL.FILE_ID] = newFileId;
+
+        let message = `Evento "${finalTitle}" actualizado correctamente.`;
 
         if (currentStatus === 'Rechazado' && isOwner && !isValidator) {
             updatedRowData[COL.STATUS] = 'Pendiente';
-            updatedRowData[COL.VALIDATOR_NOTES] = 'Re-enviado tras modificación.';
+            updatedRowData[COL.VALIDATOR_NOTES] = 'Re-enviado por el solicitante tras modificación.';
             updatedRowData[COL.CALENDAR_EVENT_ID] = '';
-            message += " Marcado como Pendiente.";
+            message += " El evento ha sido marcado como Pendiente para nueva revisión.";
         }
 
         let gcalUpdateWarning = "";
         if (currentStatus === 'Aprobado' && originalEventData.calendarEventId) {
-            try { // Intentar actualizar GCal
+            try {
                 const targetCalendar = CalendarApp.getCalendarById(formData.calendarId);
-                if (!targetCalendar) throw new Error(`Calendario (ID: ${formData.calendarId}) no encontrado.`);
+                if (!targetCalendar) throw new Error(`Calendario de Google destino (ID: ${formData.calendarId}) no encontrado o inaccesible.`);
+
                 let calendarEvent = null;
+
                 if (formData.calendarId !== originalEventData.calendarId) {
-                    // Mover evento
                     const oldCalendar = CalendarApp.getCalendarById(originalEventData.calendarId);
                     try { oldCalendar?.getEventById(originalEventData.calendarEventId)?.deleteEvent(); }
-                    catch (deleteError) { console.warn(`No se pudo eliminar evento ${originalEventData.calendarEventId} de ${originalEventData.calendarId}: ${deleteError}`); }
+                    catch (deleteError) { }
+
                     const adjustedEndDate = new Date(endDateObj); adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
                     const newCalEvent = targetCalendar.createAllDayEvent(finalTitle, startDateObj, adjustedEndDate, { description: formData.description });
-                    updatedRowData[COL.CALENDAR_EVENT_ID] = newCalEvent.getId(); // Guardar nuevo ID
+                    updatedRowData[COL.CALENDAR_EVENT_ID] = newCalEvent.getId();
+
                 } else {
-                    // Actualizar evento existente
                     try { calendarEvent = targetCalendar.getEventById(originalEventData.calendarEventId); }
-                    catch (getEventError) { console.warn(`Error obteniendo GCal ${originalEventData.calendarEventId}: ${getEventError}. Se recreará.`); }
+                    catch (getEventError) { }
+
                     if (calendarEvent) {
                         calendarEvent.setTitle(finalTitle);
                         const adjustedEndDate = new Date(endDateObj); adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
                         calendarEvent.setAllDayDates(startDateObj, adjustedEndDate);
                         calendarEvent.setDescription(formData.description);
-                    } else { // Recrear si no se encontró
+                    } else {
                          const adjustedEndDate = new Date(endDateObj); adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
                          const recreatedEvent = targetCalendar.createAllDayEvent(finalTitle, startDateObj, adjustedEndDate, { description: formData.description });
                          updatedRowData[COL.CALENDAR_EVENT_ID] = recreatedEvent.getId();
-                         gcalUpdateWarning = " (Advertencia: Evento GCal recreado)";
+                         gcalUpdateWarning = " (Advertencia: El evento original en Google Calendar no se encontró y fue recreado)";
                     }
                 }
             } catch (calError) {
-                 console.error(`Error actualizando GCal: ${calError}\nStack: ${calError.stack}`);
-                 gcalUpdateWarning = ` (Error actualizando GCal: ${calError.message})`;
+                 gcalUpdateWarning = ` (Error al actualizar Google Calendar: ${calError.message})`;
             }
         } else if (currentStatus === 'Aprobado' && !originalEventData.calendarEventId) {
-             gcalUpdateWarning = " (Advertencia: GCal no actualizado, ID no registrado)";
+             gcalUpdateWarning = " (Advertencia: El evento estaba aprobado pero no tenía ID de Google Calendar registrado, no se actualizó GCal)";
         }
 
         sheet.getRange(rowIndex, 1, 1, TOTAL_COLUMNS).setValues([updatedRowData]);
         SpreadsheetApp.flush();
+
         return { success: true, message: message + gcalUpdateWarning };
+
     } catch (error) {
-        console.error(`Error CRÍTICO en updateEvent (ID: ${uniqueId}): ${error.toString()}\nStack: ${error.stack}`);
-        return { success: false, message: `Error al modificar: ${error.message}` };
+        return { success: false, message: `Error al modificar el evento: ${error.message}` };
     }
 }
 
-
-/**
- * Elimina un evento de hoja, calendario y Drive.
- * @param {string} uniqueId ID del evento a eliminar.
- * @returns {{success: boolean, message: string}} Resultado.
- * @throws {Error} Si falla una operación crítica o validación.
- */
 function deleteEvent(uniqueId) {
-  if (!uniqueId) return { success: false, message: "Error: Falta ID del evento." };
+  if (!uniqueId) return { success: false, message: "Error: Falta el ID del evento para eliminar." };
+
   try {
     const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
     if (!sheet) throw new Error(`Hoja "${SHEET_NAME}" no encontrada.`);
+
     const { rowIndex, eventData } = findEventRowDataById(sheet, uniqueId);
-    if (!eventData) throw new Error(`Evento ${uniqueId} no encontrado.`);
+    if (!eventData) throw new Error(`Evento con ID ${uniqueId} no encontrado para eliminar.`);
 
     const currentUser = getUserInfo();
-    if (!currentUser) throw new Error("No se pudo identificar usuario.");
+    if (!currentUser) throw new Error("No se pudo identificar al usuario actual.");
+
     const isOwner = currentUser.email === eventData.requesterEmail;
     const isValidator = currentUser.role === 'validator';
     const currentStatus = eventData.status;
+
     if (!isValidator && !(isOwner && (currentStatus === 'Pendiente' || currentStatus === 'Rechazado'))) {
-        throw new Error("No tienes permiso para eliminar este evento.");
+        throw new Error("No tienes permiso para eliminar este evento en su estado actual.");
     }
 
     if (eventData.status === 'Aprobado' && eventData.calendarEventId && eventData.calendarId) {
-      try { CalendarApp.getCalendarById(eventData.calendarId)?.getEventById(eventData.calendarEventId)?.deleteEvent(); }
-      catch (calError) { console.warn(`Error eliminando GCal ${eventData.calendarEventId}: ${calError}.`); }
+      try {
+          const calendar = CalendarApp.getCalendarById(eventData.calendarId);
+          calendar?.getEventById(eventData.calendarEventId)?.deleteEvent();
+      }
+      catch (calError) {
+      }
     }
+
     if (eventData.fileId) {
-        try { DriveApp.getFileById(eventData.fileId).setTrashed(true); }
-        catch(driveError){ console.warn(`Error eliminando adjunto ${eventData.fileId}: ${driveError}`); }
-    }
-    sheet.deleteRow(rowIndex);
-    SpreadsheetApp.flush();
-    return { success: true, message: `Evento "${eventData.title}" eliminado.` };
-  } catch (error) {
-    console.error(`Error CRÍTICO en deleteEvent (ID: ${uniqueId}): ${error.toString()}\nStack: ${error.stack}`);
-    return { success: false, message: `Error al eliminar: ${error.message}` };
-  }
-}
-
-/**
- * Obtiene la URL de visualización de un archivo en Google Drive por su ID.
- * @param {string} fileId El ID del archivo en Google Drive.
- * @returns {string|null} La URL del archivo o null si hay error.
- */
-function getFileUrl(fileId) {
-    if (!fileId) return null;
-    try { return DriveApp.getFileById(fileId).getUrl(); }
-    catch (e) { console.error(`Error en getFileUrl ID ${fileId}: ${e}`); return null; }
-}
-
-// --- Funciones Auxiliares Internas ---
-
-/**
- * Busca una fila por ID y devuelve su índice (basado en 1) y datos parseados.
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet La hoja donde buscar.
- * @param {string} uniqueId El ID único del evento.
- * @returns {{rowIndex: number, eventData: object|null}} Objeto con índice y datos, o null si no se encuentra/error.
- */
-function findEventRowDataById(sheet, uniqueId) {
-    if (!uniqueId || !sheet) return { rowIndex: -1, eventData: null };
-    const dataRange = sheet.getDataRange(); const values = dataRange.getValues();
-    for (let i = 1; i < values.length; i++) {
-        if (values[i][COL.ID] == uniqueId) {
-            const row = values[i];
-            if (row.length < TOTAL_COLUMNS) continue;
-            const startDate = parseDateObject(row[COL.START_DATE]);
-            const endDate = parseDateObject(row[COL.END_DATE]);
-            if (!startDate || !endDate) return { rowIndex: i + 1, eventData: null };
-            const eventData = {
-                id: row[COL.ID], timestamp: parseDateObject(row[COL.TIMESTAMP]),
-                requesterEmail: row[COL.REQ_EMAIL], requesterName: row[COL.REQ_NAME],
-                eventType: row[COL.EVENT_TYPE], title: row[COL.TITLE],
-                startDate: startDate, endDate: endDate, description: row[COL.DESCRIPTION],
-                fileId: row[COL.FILE_ID], calendarId: row[COL.CALENDAR_ID],
-                status: row[COL.STATUS], validatorNotes: row[COL.VALIDATOR_NOTES],
-                calendarEventId: row[COL.CALENDAR_EVENT_ID]
-            };
-            return { rowIndex: i + 1, eventData: eventData };
+        try {
+            DriveApp.getFileById(eventData.fileId).setTrashed(true);
+        }
+        catch(driveError){
         }
     }
-    return { rowIndex: -1, eventData: null };
-}
 
-/**
- * Asegura que la hoja de cálculo tenga los encabezados correctos.
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet La hoja a verificar/inicializar.
- */
-function ensureSheetHeaders(sheet) {
-   if (sheet.getMaxColumns() < TOTAL_COLUMNS) sheet.insertColumnsAfter(sheet.getMaxColumns(), TOTAL_COLUMNS - sheet.getMaxColumns());
-   if (sheet.getLastRow() === 0) {
-    const headers = Array(TOTAL_COLUMNS).fill('');
-    headers[COL.ID] = "ID Evento"; headers[COL.TIMESTAMP] = "Timestamp Registro";
-    headers[COL.REQ_EMAIL] = "Email Solicitante"; headers[COL.REQ_NAME] = "Nombre Solicitante (Email)";
-    headers[COL.EVENT_TYPE] = "Tipo Evento"; headers[COL.TITLE] = "Título Completo";
-    headers[COL.START_DATE] = "Fecha Inicio"; headers[COL.END_DATE] = "Fecha Fin";
-    headers[COL.DESCRIPTION] = "Descripción"; headers[COL.FILE_ID] = "ID Archivo Adjunto";
-    headers[COL.CALENDAR_ID] = "ID Calendario Destino"; headers[COL.STATUS] = "Estado";
-    headers[COL.VALIDATOR_NOTES] = "Notas Validador"; headers[COL.CALENDAR_EVENT_ID] = "ID Evento GCalendar";
-    sheet.appendRow(headers);
-    sheet.getRange(1, 1, 1, TOTAL_COLUMNS).setFontWeight("bold").setHorizontalAlignment("center");
-    sheet.setFrozenRows(1);
+    sheet.deleteRow(rowIndex);
     SpreadsheetApp.flush();
+
+    return { success: true, message: `Evento "${eventData.title}" eliminado correctamente.` };
+
+  } catch (error) {
+    return { success: false, message: `Error al eliminar el evento: ${error.message}` };
   }
 }
 
-/**
- * Obtiene una carpeta de Google Drive por su ID. Lanza error si no existe o no es accesible.
- * @param {string} folderId El ID de la carpeta de Google Drive.
- * @returns {GoogleAppsScript.Drive.Folder} El objeto Folder.
- * @throws {Error} Si la carpeta no se encuentra o no se puede acceder.
- */
+function getFileUrl(fileId) {
+    if (!fileId) return null;
+    try {
+        const file = DriveApp.getFileById(fileId);
+        return file.getUrl();
+    }
+    catch (e) {
+        return null;
+    }
+}
+
+function findEventRowDataById(sheet, uniqueId) {
+    if (!uniqueId || !sheet) return { rowIndex: -1, eventData: null };
+
+    try {
+        const dataRange = sheet.getDataRange();
+        const values = dataRange.getValues();
+
+        for (let i = 1; i < values.length; i++) {
+            if (values[i][COL.ID] && values[i][COL.ID].toString() === uniqueId.toString()) {
+                const row = values[i];
+                if (row.length < TOTAL_COLUMNS) {
+                    continue;
+                }
+
+                const startDate = parseDateObject(row[COL.START_DATE]);
+                const endDate = parseDateObject(row[COL.END_DATE]);
+                const timestamp = parseDateObject(row[COL.TIMESTAMP]);
+
+                if (!startDate || !endDate) {
+                    return { rowIndex: i + 1, eventData: null };
+                }
+
+                const eventData = {
+                    id: row[COL.ID],
+                    timestamp: timestamp,
+                    requesterEmail: row[COL.REQ_EMAIL],
+                    requesterName: row[COL.REQ_NAME],
+                    eventType: row[COL.EVENT_TYPE],
+                    title: row[COL.TITLE],
+                    startDate: startDate,
+                    endDate: endDate,
+                    description: row[COL.DESCRIPTION],
+                    fileId: row[COL.FILE_ID],
+                    calendarId: row[COL.CALENDAR_ID],
+                    status: row[COL.STATUS],
+                    validatorNotes: row[COL.VALIDATOR_NOTES],
+                    calendarEventId: row[COL.CALENDAR_EVENT_ID]
+                };
+                return { rowIndex: i + 1, eventData: eventData };
+            }
+        }
+        return { rowIndex: -1, eventData: null };
+    } catch (error) {
+        return { rowIndex: -1, eventData: null };
+    }
+}
+
+function ensureSheetHeaders(sheet) {
+   if (sheet.getMaxColumns() < TOTAL_COLUMNS) {
+       sheet.insertColumnsAfter(sheet.getMaxColumns(), TOTAL_COLUMNS - sheet.getMaxColumns());
+   }
+   if (sheet.getLastRow() === 0) {
+        const headers = Array(TOTAL_COLUMNS).fill('');
+        headers[COL.ID] = "ID Evento";
+        headers[COL.TIMESTAMP] = "Timestamp Registro";
+        headers[COL.REQ_EMAIL] = "Email Solicitante";
+        headers[COL.REQ_NAME] = "Nombre Solicitante";
+        headers[COL.EVENT_TYPE] = "Tipo Evento";
+        headers[COL.TITLE] = "Título Completo";
+        headers[COL.START_DATE] = "Fecha Inicio";
+        headers[COL.END_DATE] = "Fecha Fin";
+        headers[COL.DESCRIPTION] = "Descripción";
+        headers[COL.FILE_ID] = "ID Archivo Adjunto";
+        headers[COL.CALENDAR_ID] = "ID Calendario Destino";
+        headers[COL.STATUS] = "Estado";
+        headers[COL.VALIDATOR_NOTES] = "Notas Validador";
+        headers[COL.CALENDAR_EVENT_ID] = "ID Evento GCalendar";
+
+        sheet.appendRow(headers);
+        sheet.getRange(1, 1, 1, TOTAL_COLUMNS).setFontWeight("bold").setHorizontalAlignment("center");
+        sheet.setFrozenRows(1);
+        SpreadsheetApp.flush();
+   }
+}
+
 function getDriveFolderById(folderId) {
-  if (!folderId || folderId === "PLACEHOLDER_FOLDER_ID") { // Verifica también el placeholder
-       throw new Error("ID de carpeta Drive no configurado en Code.gs (DRIVE_FOLDER_ID).");
+  if (!folderId || folderId === "PLACEHOLDER_FOLDER_ID" || folderId === "123id") {
+       throw new Error("El ID de la carpeta de Google Drive (DRIVE_FOLDER_ID) no está configurado correctamente en el archivo env.gs.");
   }
   try {
       const folder = DriveApp.getFolderById(folderId);
-      folder.getName(); // Intenta operación simple para verificar acceso
+      folder.getName();
       return folder;
   } catch (e) {
-      console.error(`Error crítico accediendo a carpeta Drive ID "${folderId}": ${e}`);
-      if (e.message.includes("Invalid argument")) throw new Error(`ID de carpeta "${folderId}" inválido.`);
-      else if (e.message.includes("not found")) throw new Error(`Carpeta con ID "${folderId}" no encontrada.`);
-      else if (e.message.includes("Access denied")) throw new Error(`Acceso denegado a carpeta ID "${folderId}". Verifica permisos.`);
-      else throw new Error(`No se pudo acceder a carpeta (ID: ${folderId}). Error: ${e.message}`);
+      if (e.message.includes("Invalid argument") || e.message.includes("Argumento no válido")) {
+          throw new Error(`El ID de carpeta "${folderId}" parece ser inválido.`);
+      } else if (e.message.includes("Not Found") || e.message.includes("no encontrado")) {
+          throw new Error(`La carpeta de Google Drive con ID "${folderId}" no fue encontrada. Verifica el ID y que la carpeta exista.`);
+      } else if (e.message.includes("Access denied") || e.message.includes("Acceso denegado")) {
+          throw new Error(`Acceso denegado a la carpeta de Drive con ID "${folderId}". Asegúrate de que la cuenta que ejecuta el script (${Session.getEffectiveUser().getEmail()}) tenga permisos de edición sobre ella.`);
+      } else {
+          throw new Error(`No se pudo acceder a la carpeta de Drive (ID: ${folderId}). Error: ${e.message}`);
+      }
   }
 }
 
-/**
- * Parsea una entrada (string, número, Date) a un objeto Date válido.
- * @param {*} dateInput La entrada a parsear.
- * @returns {Date|null} Objeto Date válido o null si falla.
- */
 function parseDateObject(dateInput) {
     if (!dateInput) return null;
-    if (dateInput instanceof Date && !isNaN(dateInput.getTime())) return dateInput;
-    try { const d = new Date(dateInput); return (!isNaN(d.getTime())) ? d : null; }
-    catch (e) { return null; }
+
+    if (dateInput instanceof Date && !isNaN(dateInput.getTime())) {
+        return dateInput;
+    }
+
+    try {
+        if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+            const timeZone = Session.getScriptTimeZone();
+            const parsedDate = Utilities.parseDate(dateInput, timeZone, 'yyyy-MM-dd');
+            return parsedDate;
+        }
+
+        if (typeof dateInput === 'object' && dateInput.constructor === Date && !isNaN(dateInput.getTime())) {
+             return dateInput;
+        }
+
+        const d = new Date(dateInput);
+        return (!isNaN(d.getTime())) ? d : null;
+
+    } catch (e) {
+        return null;
+    }
 }
 
-/**
- * Formatea un objeto Date a 'YYYY-MM-DD'.
- * @param {Date} dateObject El objeto Date.
- * @returns {string} Fecha formateada 'YYYY-MM-DD' o "".
- */
+
 function formatISODate(dateObject) {
     if (!dateObject || !(dateObject instanceof Date) || isNaN(dateObject.getTime())) return "";
+
     try {
-        const offset = dateObject.getTimezoneOffset();
-        const adjustedDate = new Date(dateObject.getTime() - (offset * 60 * 1000));
-        return adjustedDate.toISOString().split('T')[0];
-    } catch (e) { return ""; }
+        const timeZone = Session.getScriptTimeZone();
+        return Utilities.formatDate(dateObject, timeZone, "yyyy-MM-dd");
+    } catch (e) {
+        return "";
+    }
 }
 
-/**
- * Formatea un objeto Date a 'DD/MM/YYYY'.
- * @param {Date} dateObject El objeto Date.
- * @returns {string} Fecha formateada 'DD/MM/YYYY' o texto de error.
- */
 function formatDisplayDate(dateObject) {
   if (!dateObject || !(dateObject instanceof Date) || isNaN(dateObject.getTime())) return "Fecha inválida";
+
    try {
-       const year = dateObject.getUTCFullYear();
-       const month = (dateObject.getUTCMonth() + 1).toString().padStart(2, '0');
-       const day = dateObject.getUTCDate().toString().padStart(2, '0');
-       return `${day}/${month}/${year}`;
-   } catch (e) { return "Error formato"; }
+       const timeZone = Session.getScriptTimeZone();
+       return Utilities.formatDate(dateObject, timeZone, "dd/MM/yyyy");
+   } catch (e) {
+       return "Error formato";
+   }
 }
 
-/**
- * Intenta obtener el nombre de un calendario por su ID.
- * @param {string} calendarId El ID del calendario.
- * @returns {string} Nombre del calendario o ID si falla.
- */
 function getCalendarNameById(calendarId) {
     if (!calendarId) return "N/A";
-    try { return CalendarApp.getCalendarById(calendarId)?.getName() || `ID: ${calendarId}`; }
-    catch (e) { return `ID: ${calendarId} (Error)`; }
+    try {
+        return CalendarApp.getCalendarById(calendarId)?.getName() || `Calendario no encontrado (ID: ${calendarId})`;
+    }
+    catch (e) {
+        return `ID: ${calendarId} (Error al acceder)`;
+    }
 }
 
-/**
- * Parsea y formatea una fecha como 'YYYY-MM-DD'.
- * @param {*} dateInput Entrada de fecha.
- * @returns {string} Fecha 'YYYY-MM-DD' o "".
- */
 function parseAndFormatDateISO(dateInput) {
     const dateObj = parseDateObject(dateInput);
     return formatISODate(dateObj);
